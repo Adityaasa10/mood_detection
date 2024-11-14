@@ -19,7 +19,6 @@ bleach==6.1.0
 blessings==1.7
 blinker==1.8.1
 blis==0.7.11
-bokeh==3.4.0
 bqplot==0.12.43
 branca==0.7.1
 cachetools==5.3.3
