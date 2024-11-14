@@ -1,4 +1,4 @@
-from flask import Flask, render_template, Response, stream_with_context, jsonify
+from flask import Flask, render_template, Response, jsonify
 import cv2
 import numpy as np
 from deepface import DeepFace
@@ -8,23 +8,9 @@ import pickle
 import json
 import os
 import time
-from queue import Queue
-import threading
-from pathlib import Path
-
-# Initialize Flask app
-app = Flask(__name__)
-
-# Create a queue for face events
-face_event_queue = Queue()
-
-# Ensure the static and templates directories exist
-Path(app.static_folder).mkdir(parents=True, exist_ok=True)
-Path(app.template_folder).mkdir(parents=True, exist_ok=True)
 
 class FaceEmotionTracker:
     def __init__(self, db_path='face_database.db', similarity_threshold=8, check_interval=20):
-        """Initialize the face emotion tracker with given parameters."""
         self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
         self.db_path = db_path
         self.similarity_threshold = similarity_threshold
@@ -32,16 +18,16 @@ class FaceEmotionTracker:
         self.init_database()
         self.last_check_time = time.time()
         self.face_embeddings = {}
-        self.video_capture = None
+        self.new_face_detected = False
+        self.known_face_detected = False
+        self.face_status = "Unknown"
 
     def init_database(self):
-        """Initialize SQLite database for storing face data."""
         if os.path.exists(self.db_path):
             try:
                 sqlite3.connect(self.db_path).close()
             except sqlite3.Error:
                 os.remove(self.db_path)
-
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         cursor.execute('''
@@ -57,7 +43,6 @@ class FaceEmotionTracker:
         conn.close()
 
     def get_face_embedding(self, face_img):
-        """Generate face embedding using DeepFace."""
         try:
             result = DeepFace.represent(face_img, model_name="Facenet", enforce_detection=False)
             return result[0]['embedding'] if isinstance(result, list) else result['embedding']
@@ -66,7 +51,6 @@ class FaceEmotionTracker:
             return None
 
     def is_face_similar(self, embedding1, embedding2):
-        """Compare two face embeddings for similarity."""
         if embedding1 is None or embedding2 is None:
             return False
         try:
@@ -77,56 +61,48 @@ class FaceEmotionTracker:
             return False
 
     def store_new_face(self, face_id, face_img, emotion):
-        """Store a new face in the database."""
         embedding = self.get_face_embedding(face_img)
         if embedding is None:
             return
-        
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         current_time = datetime.now()
         emotion_history = json.dumps([{'emotion': emotion, 'timestamp': current_time.isoformat()}])
-        
         cursor.execute('''
             INSERT INTO faces (id, embedding, first_seen, last_seen, emotion_history)
             VALUES (?, ?, ?, ?, ?)
         ''', (face_id, pickle.dumps(embedding), current_time, current_time, emotion_history))
-        
         conn.commit()
         conn.close()
         print("New face stored successfully.")
-        face_event_queue.put('new_face')
+        self.new_face_detected = True
+        self.face_status = "New face detected and stored!"
 
     def update_existing_face(self, face_id, emotion):
-        """Update emotion history for an existing face."""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         cursor.execute('SELECT emotion_history FROM faces WHERE id = ?', (face_id,))
         result = cursor.fetchone()
-        
         if result:
             emotion_history = json.loads(result[0])
-            emotion_history.append({
-                'emotion': emotion,
-                'timestamp': datetime.now().isoformat()
-            })
+            emotion_history.append({'emotion': emotion, 'timestamp': datetime.now().isoformat()})
             cursor.execute('''
                 UPDATE faces SET last_seen = ?, emotion_history = ?
                 WHERE id = ?
             ''', (datetime.now(), json.dumps(emotion_history), face_id))
-        
+            self.known_face_detected = True
+            self.face_status = "Known face detected!"
         conn.commit()
         conn.close()
 
     def process_frame(self, frame):
-        """Process a video frame for face detection and emotion analysis."""
-        if frame is None:
-            return None
-
         gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         faces = self.face_cascade.detectMultiScale(gray_frame, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
-
+        self.new_face_detected = False
+        self.known_face_detected = False
+        if len(faces) == 0:
+            self.face_status = "Unknown"
         current_time = time.time()
         should_check_database = (current_time - self.last_check_time) >= self.check_interval
 
@@ -151,105 +127,60 @@ class FaceEmotionTracker:
                         cursor = conn.cursor()
                         cursor.execute('SELECT id, embedding FROM faces')
                         is_new_face = True
-                        
                         for stored_face_id, stored_embedding_blob in cursor.fetchall():
                             stored_embedding = pickle.loads(stored_embedding_blob)
                             if self.is_face_similar(embedding, stored_embedding):
                                 is_new_face = False
                                 self.update_existing_face(stored_face_id, emotion)
                                 break
-                        
                         if is_new_face:
-                            print("New face detected!")
                             self.store_new_face(face_id, face_roi, emotion)
-                        
                         conn.close()
                         self.last_check_time = current_time
             else:
                 self.update_existing_face(face_id, emotion)
-
-            # Draw rectangle and emotion text
-            cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 0, 255), 2)
-            cv2.putText(frame, emotion_text, (x, y - 10),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+            color = (0, 255, 0) if self.known_face_detected else (0, 0, 255)
+            cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
+            cv2.putText(frame, self.face_status, (x, y - 35), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            cv2.putText(frame, emotion_text, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
         return frame
 
     def generate_frames(self):
-        """Generator function for video streaming."""
-        self.video_capture = cv2.VideoCapture(0)
-        
-        try:
-            while True:
-                success, frame = self.video_capture.read()
-                if not success:
-                    break
-                
-                processed_frame = self.process_frame(frame)
-                if processed_frame is None:
-                    continue
-                
-                _, buffer = cv2.imencode('.jpg', processed_frame)
-                frame_bytes = buffer.tobytes()
-                
-                yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-        
-        finally:
-            if self.video_capture:
-                self.video_capture.release()
+        cap = cv2.VideoCapture(0)
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+            processed_frame = self.process_frame(frame)
+            _, buffer = cv2.imencode('.jpg', processed_frame)
+            frame_bytes = buffer.tobytes()
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+        cap.release()
 
-# Flask routes
+    def get_current_status(self):
+        return {
+            "new_face": self.new_face_detected,
+            "known_face": self.known_face_detected,
+            "status": self.face_status
+        }
+
+app = Flask(__name__)
+tracker = FaceEmotionTracker()
+
 @app.route('/')
 def index():
-    """Render the main page."""
     return render_template('index.html')
 
 @app.route('/video_feed')
 def video_feed():
-    """Video streaming route."""
-    tracker = FaceEmotionTracker()
-    return Response(
-        tracker.generate_frames(),
-        mimetype='multipart/x-mixed-replace; boundary=frame'
-    )
+    return Response(tracker.generate_frames(),
+                   mimetype='multipart/x-mixed-replace; boundary=frame')
 
-@app.route('/face-events')
-def face_events():
-    """Server-sent events route for face detection notifications."""
-    def event_stream():
-        while True:
-            event = face_event_queue.get()
-            yield f"data: {event}\n\n"
-            time.sleep(0.1)
-
-    return Response(
-        stream_with_context(event_stream()),
-        mimetype='text/event-stream'
-    )
-
-@app.route('/start_video')
-def start_video():
-    """Start video capture."""
-    tracker = FaceEmotionTracker()
-    if tracker.video_capture is None:
-        tracker.video_capture = cv2.VideoCapture(0)
-    return jsonify({'status': 'success'})
-
-@app.route('/stop_video')
-def stop_video():
-    """Stop video capture."""
-    tracker = FaceEmotionTracker()
-    if tracker.video_capture:
-        tracker.video_capture.release()
-        tracker.video_capture = None
-    return jsonify({'status': 'success'})
+@app.route('/face_status')
+def face_status():
+    return jsonify(tracker.get_current_status())
 
 if __name__ == '__main__':
-    # Ensure the database directory exists
-    db_dir = os.path.dirname('face_database.db')
-    if db_dir and not os.path.exists(db_dir):
-        os.makedirs(db_dir)
-    
-    # Run the Flask app
-    app.run(debug=True, threaded=True)
+    app.run(debug=True,  port=5000)
