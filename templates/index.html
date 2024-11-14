@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Face Detection System</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-100">
+    <div class="container mx-auto px-4 py-8">
+        <h1 class="text-3xl font-bold text-center mb-8">Face Detection System</h1>
+        
+        <div class="flex justify-center space-x-4 mb-6">
+            <button onclick="startVideo()" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">
+                Start Video
+            </button>
+            <button onclick="stopVideo()" class="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded">
+                Stop Video
+            </button>
+        </div>
+
+        <div id="new-face-alert" class="hidden bg-yellow-100 border border-yellow-400 text-yellow-700 px-4 py-3 rounded relative mb-4">
+            <strong class="font-bold">New face detected!</strong>
+            <span class="block sm:inline"> The system has detected a new face and added it to the database.</span>
+        </div>
+
+        <div class="video-container bg-white rounded-lg shadow-lg overflow-hidden">
+            <img id="video-feed" src="{{ url_for('video_feed') }}" class="w-full">
+        </div>
+    </div>
+
+    <script>
+        let eventSource = null;
+
+        function startVideo() {
+            fetch('/start_video')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        document.getElementById('video-feed').style.display = 'block';
+                        setupEventSource();
+                    }
+                });
+        }
+
+        function stopVideo() {
+            fetch('/stop_video')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        document.getElementById('video-feed').style.display = 'none';
+                        if (eventSource) {
+                            eventSource.close();
+                            eventSource = null;
+                        }
+                    }
+                });
+        }
+
+        function setupEventSource() {
+            if (eventSource) {
+                eventSource.close();
+            }
+
+            eventSource = new EventSource('/face-events');
+            eventSource.onmessage = function(event) {
+                if (event.data === 'new_face') {
+                    const alert = document.getElementById('new-face-alert');
+                    alert.classList.remove('hidden');
+                    setTimeout(() => {
+                        alert.classList.add('hidden');
+                    }, 5000);
+                }
+            };
+        }
+    </script>
+</body>
+</html>
