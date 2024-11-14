@@ -3,78 +3,110 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Face Detection System</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <title>Real-Time Emotion Detection</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .status-alert {
+            @apply mt-4 p-4 rounded-lg transition-all duration-300 ease-in-out opacity-0;
+        }
+        .status-alert.show {
+            @apply opacity-100;
+        }
+        .new-face {
+            @apply bg-yellow-100 text-yellow-800 border border-yellow-400;
+        }
+        .known-face {
+            @apply bg-green-100 text-green-800 border border-green-400;
+        }
+        .unkown {
+            @apply bg-gray-100 text-gray-800 border border-gray-400;
+        }
+        #video-output {
+            @apply hidden border-2 border-gray-800 rounded-lg shadow-lg w-[500px] h-[380px] mx-auto;
+        }
+    </style>
 </head>
-<body class="bg-gray-100">
-    <div class="container mx-auto px-4 py-8">
-        <h1 class="text-3xl font-bold text-center mb-8">Face Detection System</h1>
-        
-        <div class="flex justify-center space-x-4 mb-6">
-            <button onclick="startVideo()" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">
-                Start Video
-            </button>
-            <button onclick="stopVideo()" class="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded">
-                Stop Video
-            </button>
-        </div>
+<body class="grid h-screen place-items-center bg-gradient-to-br from-gray-50 to-gray-200">
+    <div class="container mx-auto px-4 max-w-4xl">
+        <div class="bg-white rounded-2xl shadow-xl p-8">
+            <h1 class="text-4xl font-extrabold text-gray-800 mb-8 bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-purple-600">
+                Real-Time Emotion Detection
+            </h1>
 
-        <div id="new-face-alert" class="hidden bg-yellow-100 border border-yellow-400 text-yellow-700 px-4 py-3 rounded relative mb-4">
-            <strong class="font-bold">New face detected!</strong>
-            <span class="block sm:inline"> The system has detected a new face and added it to the database.</span>
-        </div>
+            <div class="flex justify-center gap-4 mb-6">
+                <button id="startVideo" 
+                        class="px-6 py-3 bg-gradient-to-r from-blue-500 to-blue-700 text-white rounded-lg 
+                               hover:from-blue-600 hover:to-blue-800 transform hover:scale-105 transition-all 
+                               duration-200 shadow-md font-semibold flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path d="M10 12a2 2 0 100-4 2 2 0 000 4z"/>
+                        <path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd"/>
+                    </svg>
+                    Start Video
+                </button>
+                <button id="stopVideo" 
+                        class="px-6 py-3 bg-gradient-to-r from-red-500 to-red-700 text-white rounded-lg 
+                               hover:from-red-600 hover:to-red-800 transform hover:scale-105 transition-all 
+                               duration-200 shadow-md font-semibold flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M3.707 2.293a1 1 0 00-1.414 1.414l14 14a1 1 0 001.414-1.414l-14-14z" clip-rule="evenodd"/>
+                        <path fill-rule="evenodd" d="M16.293 2.293a1 1 0 011.414 1.414l-14 14a1 1 0 01-1.414-1.414l14-14z" clip-rule="evenodd"/>
+                    </svg>
+                    Stop Video
+                </button>
+            </div>
 
-        <div class="video-container bg-white rounded-lg shadow-lg overflow-hidden">
-            <img id="video-feed" src="{{ url_for('video_feed') }}" class="w-full">
+            <div class="relative">
+                <img id="video-output" src="{{ url_for('video_feed') }}" alt="Video Feed" 
+                     class="transform hover:scale-[1.02] transition-transform duration-300">
+            </div>
+
+            <div id="face-status" class="status-alert mt-6"></div>
         </div>
     </div>
 
     <script>
-        let eventSource = null;
+        const videoOutput = document.getElementById('video-output');
+        const statusDiv = document.getElementById('face-status');
+        
+        document.getElementById('startVideo').addEventListener('click', () => {
+            videoOutput.style.display = 'block';
+            videoOutput.classList.add('animate-fade-in');
+        });
 
-        function startVideo() {
-            fetch('/start_video')
+        document.getElementById('stopVideo').addEventListener('click', () => {
+            videoOutput.style.display = 'none';
+        });
+
+        function updateStatus() {
+            fetch('/face_status')
                 .then(response => response.json())
                 .then(data => {
-                    if (data.status === 'success') {
-                        document.getElementById('video-feed').style.display = 'block';
-                        setupEventSource();
+                    statusDiv.style.display = 'block';
+                    statusDiv.textContent = data.status;
+                    
+                    statusDiv.classList.remove('new-face', 'known-face', 'unkown');
+                    statusDiv.classList.remove('show');
+                    
+                    if (data.new_face) {
+                        statusDiv.classList.add('new-face', 'show');
+                    } else if (data.known_face) {
+                        statusDiv.classList.add('known-face', 'show');
+                    } else {
+                        statusDiv.classList.add('unkown', 'show');
                     }
-                });
+                    
+                    statusDiv.classList.add('transform', 'transition-all', 'duration-300');
+                    
+                    statusDiv.style.transform = 'translateY(0)';
+                    statusDiv.style.opacity = '1';
+                })
+                .catch(error => console.error('Error fetching status:', error));
         }
 
-        function stopVideo() {
-            fetch('/stop_video')
-                .then(response => response.json())
-                .then(data => {
-                    if (data.status === 'success') {
-                        document.getElementById('video-feed').style.display = 'none';
-                        if (eventSource) {
-                            eventSource.close();
-                            eventSource = null;
-                        }
-                    }
-                });
-        }
+        setInterval(updateStatus, 1000);
 
-        function setupEventSource() {
-            if (eventSource) {
-                eventSource.close();
-            }
-
-            eventSource = new EventSource('/face-events');
-            eventSource.onmessage = function(event) {
-                if (event.data === 'new_face') {
-                    const alert = document.getElementById('new-face-alert');
-                    alert.classList.remove('hidden');
-                    setTimeout(() => {
-                        alert.classList.add('hidden');
-                    }, 5000);
-                }
-            };
-        }
+        updateStatus();
     </script>
 </body>
 </html>
